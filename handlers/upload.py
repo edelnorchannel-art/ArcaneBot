@@ -7,9 +7,10 @@ from pathlib import Path
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from keyboards.inline import get_projects_keyboard, get_time_slots_keyboard
+from keyboards.reply import get_main_keyboard
 from projects import get_projects
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
@@ -95,8 +96,9 @@ async def _upload_messages(
     upload_date = date.today().isoformat()
     remote_folder = "/".join(
         [
-            _sanitize_remote_path_part(project_name),
+            _sanitize_remote_path_part("Фото"),
             _sanitize_remote_path_part(upload_date),
+            _sanitize_remote_path_part(project_name),
             _sanitize_remote_path_part(time_slot),
         ]
     )
@@ -161,10 +163,11 @@ async def _send_media_group_result(
             await _send_upload_error(messages[-1], error)
             return
 
-        await messages[-1].answer(
-            _build_success_message(project_name, upload_date, time_slot, uploaded_count)
-        )
         await state.clear()
+        await messages[-1].answer(
+            _build_success_message(project_name, upload_date, time_slot, uploaded_count),
+            reply_markup=get_main_keyboard(),
+        )
 
 
 @router.message(F.text == "Загрузить фотографии")
@@ -172,6 +175,10 @@ async def upload_photos(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadPhotosState.choosing_project)
     await message.answer(
         "Выберите проект:",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        "Список проектов:",
         reply_markup=get_projects_keyboard(),
     )
 
@@ -228,7 +235,8 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
         await _send_upload_error(message, error)
         return
 
-    await message.answer(
-        _build_success_message(project_name, upload_date, time_slot, uploaded_count)
-    )
     await state.clear()
+    await message.answer(
+        _build_success_message(project_name, upload_date, time_slot, uploaded_count),
+        reply_markup=get_main_keyboard(),
+    )
