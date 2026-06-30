@@ -1,8 +1,9 @@
 import logging
 import time
+from http import HTTPStatus
 from os import PathLike
 
-from webdav4.client import Client
+from webdav4.client import Client, HTTPError, ResourceAlreadyExists, ResourceNotFound
 
 from config import WEBDAV_LOGIN, WEBDAV_PASSWORD, WEBDAV_URL
 
@@ -20,11 +21,24 @@ class WebDAVService:
         )
 
     def folder_exists(self, path: str) -> bool:
-        return self.client.exists(path) and self.client.isdir(path)
+        try:
+            return self.client.exists(path) and self.client.isdir(path)
+        except ResourceNotFound:
+            return False
+        except HTTPError as exc:
+            if exc.status_code == HTTPStatus.NOT_FOUND:
+                return False
+            raise
 
     def create_folder(self, path: str) -> None:
-        if not self.folder_exists(path):
+        try:
             self.client.mkdir(path)
+        except ResourceAlreadyExists:
+            return
+        except HTTPError as exc:
+            if exc.status_code == HTTPStatus.METHOD_NOT_ALLOWED:
+                return
+            raise
 
     def create_folders(self, path: str) -> None:
         current_path = ""
