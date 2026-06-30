@@ -7,11 +7,11 @@ from pathlib import Path
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 
 from config import CORPORATE_CHAT_ID
 from keyboards.inline import get_projects_keyboard, get_time_slots_keyboard
-from keyboards.reply import get_main_keyboard
+from keyboards.reply import get_cancel_keyboard, get_main_keyboard
 from projects import get_projects
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
@@ -197,11 +197,20 @@ async def upload_photos(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadPhotosState.choosing_project)
     await message.answer(
         "Выберите локацию",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=get_cancel_keyboard(),
     )
     await message.answer(
         "Список локаций:",
         reply_markup=get_projects_keyboard(),
+    )
+
+
+@router.message(F.text == "Отмена")
+async def cancel_upload(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Действие отменено.",
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -221,10 +230,14 @@ async def choose_project(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(UploadPhotosState.choosing_slot, F.data.startswith("slot:"))
 async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
     time_slot = callback.data.split(":", maxsplit=1)[1]
+    data = await state.get_data()
+    project_name = _get_project_name(data["project"])
     await state.update_data(time=time_slot)
     await state.set_state(UploadPhotosState.waiting_photos)
     if isinstance(callback.message, Message):
-        await callback.message.answer("Отправьте фотографии без сжатия")
+        await callback.message.answer(
+            f"Загрузите фотографии после игры в {time_slot}, на локации {project_name}"
+        )
     await callback.answer()
 
 
