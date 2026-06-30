@@ -9,6 +9,7 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
+from config import CORPORATE_CHAT_ID
 from keyboards.inline import get_projects_keyboard, get_time_slots_keyboard
 from keyboards.reply import get_main_keyboard
 from projects import get_projects
@@ -142,6 +143,20 @@ async def _send_upload_error(message: Message, error: UploadError) -> None:
     await message.answer(error.user_message)
 
 
+async def _send_success_copy(bot: Bot, success_message: str) -> None:
+    if not CORPORATE_CHAT_ID:
+        logger.warning("CORPORATE_CHAT_ID is not set, success copy was not sent")
+        return
+
+    try:
+        await bot.send_message(
+            chat_id=int(CORPORATE_CHAT_ID),
+            text=success_message,
+        )
+    except Exception:
+        logger.exception("Failed to send success upload copy to corporate chat")
+
+
 async def _send_media_group_result(
     key: tuple[int, int, str],
     bot: Bot,
@@ -164,21 +179,28 @@ async def _send_media_group_result(
             return
 
         await state.clear()
+        success_message = _build_success_message(
+            project_name,
+            upload_date,
+            time_slot,
+            uploaded_count,
+        )
         await messages[-1].answer(
-            _build_success_message(project_name, upload_date, time_slot, uploaded_count),
+            success_message,
             reply_markup=get_main_keyboard(),
         )
+        await _send_success_copy(bot, success_message)
 
 
 @router.message(F.text == "Загрузить фотографии")
 async def upload_photos(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadPhotosState.choosing_project)
     await message.answer(
-        "Выберите проект:",
+        "Выберите локацию",
         reply_markup=ReplyKeyboardRemove(),
     )
     await message.answer(
-        "Выберите локацию:",
+        "Список локаций:",
         reply_markup=get_projects_keyboard(),
     )
 
@@ -236,7 +258,14 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
         return
 
     await state.clear()
+    success_message = _build_success_message(
+        project_name,
+        upload_date,
+        time_slot,
+        uploaded_count,
+    )
     await message.answer(
-        _build_success_message(project_name, upload_date, time_slot, uploaded_count),
+        success_message,
         reply_markup=get_main_keyboard(),
     )
+    await _send_success_copy(bot, success_message)
