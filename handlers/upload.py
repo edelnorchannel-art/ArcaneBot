@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -63,6 +64,11 @@ def _get_message_file(message: Message):
     return None, ".jpg"
 
 
+def _sanitize_remote_path_part(value: str) -> str:
+    safe_value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", value)
+    return safe_value.strip(" .") or "unknown"
+
+
 def _build_success_message(
     project_name: str,
     upload_date: str,
@@ -87,7 +93,13 @@ async def _upload_messages(
     time_slot = data["time"]
     project_name = _get_project_name(project_id)
     upload_date = date.today().isoformat()
-    remote_folder = f"{project_name}/{upload_date}/{time_slot}"
+    remote_folder = "/".join(
+        [
+            _sanitize_remote_path_part(project_name),
+            _sanitize_remote_path_part(upload_date),
+            _sanitize_remote_path_part(time_slot),
+        ]
+    )
     uploaded_count = 0
 
     try:
