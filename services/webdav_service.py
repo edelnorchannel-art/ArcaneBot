@@ -2,12 +2,14 @@ import logging
 import time
 from http import HTTPStatus
 from os import PathLike
+from typing import Callable, TypeVar
 
 from webdav4.client import Client, HTTPError, ResourceAlreadyExists, ResourceNotFound
 
 from config import WEBDAV_LOGIN, WEBDAV_PASSWORD, WEBDAV_URL
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class WebDAVService:
@@ -18,6 +20,7 @@ class WebDAVService:
         self.client = Client(
             WEBDAV_URL,
             auth=(WEBDAV_LOGIN, WEBDAV_PASSWORD),
+            timeout=60,
         )
 
     def folder_exists(self, path: str) -> bool:
@@ -45,7 +48,36 @@ class WebDAVService:
 
         for folder in path.strip("/").split("/"):
             current_path = f"{current_path}/{folder}" if current_path else folder
-            self.create_folder(current_path)
+            self._with_retry(
+                operation_name="WebDAV create folder",
+                path=current_path,
+                operation=lambda folder_path=current_path: self.create_folder(folder_path),
+            )
+
+    def _with_retry(
+        self,
+        operation_name: str,
+        path: str,
+        operation: Callable[[], T],
+    ) -> T:
+        for attempt in range(1, 4):
+            try:
+                return operation()
+            except Exception:
+                if attempt == 3:
+                    logger.exception("%s failed: %s", operation_name, path)
+                    raise
+
+                logger.warning(
+                    "%s failed, retrying %s/3: %s",
+                    operation_name,
+                    attempt,
+                    path,
+                    exc_info=True,
+                )
+                time.sleep(1)
+
+        raise RuntimeError(f"{operation_name} failed: {path}")
 
     def upload_file(
         self,
@@ -53,23 +85,14 @@ class WebDAVService:
         remote_path: str,
         overwrite: bool = False,
     ) -> None:
-        for attempt in range(1, 4):
-            try:
+        self._with_retry(
+            operation_name="WebDAV upload",
+            path=remote_path,
+            operation=lambda: (
                 self.client.upload_file(
                     from_path=local_path,
                     to_path=remote_path,
                     overwrite=overwrite,
                 )
-                return
-            except Exception:
-                if attempt == 3:
-                    logger.exception("Failed to upload file to WebDAV: %s", remote_path)
-                    raise
-
-                logger.warning(
-                    "WebDAV upload failed, retrying %s/3: %s",
-                    attempt,
-                    remote_path,
-                    exc_info=True,
-                )
-                time.sleep(1)
+            ),
+        )
