@@ -178,7 +178,7 @@ async def upload_photos(message: Message, state: FSMContext) -> None:
         reply_markup=ReplyKeyboardRemove(),
     )
     await message.answer(
-        "Список проектов:",
+        "Выберите локацию:",
         reply_markup=get_projects_keyboard(),
     )
 
@@ -202,7 +202,7 @@ async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(time=time_slot)
     await state.set_state(UploadPhotosState.waiting_photos)
     if isinstance(callback.message, Message):
-        await callback.message.answer("Отправьте фотографии.")
+        await callback.message.answer("Отправьте фотографии без сжатия")
     await callback.answer()
 
 
