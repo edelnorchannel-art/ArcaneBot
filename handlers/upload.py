@@ -93,7 +93,7 @@ async def _upload_messages(
     project_id = data["project"]
     time_slot = data["time"]
     project_name = _get_project_name(project_id)
-    upload_date = date.today().isoformat()
+    upload_date = date.today().strftime("%d-%m-%Y")
     remote_folder = "/".join(
         [
             _sanitize_remote_path_part("Фото"),
