@@ -128,6 +128,13 @@ def _generate_location_id(locations: list[dict[str, Any]]) -> str:
 
 def _get_projects(location: dict[str, Any]) -> list[dict[str, Any]]:
     projects = location.get("projects", [])
+    if isinstance(projects, dict):
+        return [
+            {"id": project_id, **project}
+            for project_id, project in projects.items()
+            if isinstance(project, dict)
+        ]
+
     if not isinstance(projects, list):
         location["projects"] = []
         return location["projects"]
@@ -181,6 +188,24 @@ def _generate_project_id(projects: list[dict[str, Any]]) -> str:
             continue
 
     return f"project_{max_number + 1}"
+
+
+def _get_project_entries() -> list[tuple[str, str, dict[str, Any], dict[str, Any]]]:
+    entries = []
+
+    for location in _get_locations():
+        location_id = str(location.get("id", ""))
+        if not location_id:
+            continue
+
+        for project in _get_projects(location):
+            project_id = str(project.get("id", ""))
+            if not project_id:
+                continue
+
+            entries.append((location_id, project_id, location, project))
+
+    return entries
 
 
 def _render_locations_page() -> str:
@@ -291,19 +316,15 @@ def _build_project_options(
         selected = " selected" if not selected_project_key else ""
         options.append(f'<option value=""{selected}>Все проекты</option>')
 
-    for location in _get_locations():
-        location_id = str(location.get("id", ""))
+    for location_id, project_id, location, project in _get_project_entries():
         location_name = str(location.get("name", ""))
-
-        for project in _get_projects(location):
-            project_id = str(project.get("id", ""))
-            project_name = str(project.get("name", ""))
-            project_key = f"{location_id}:{project_id}"
-            selected = " selected" if project_key == selected_project_key else ""
-            option_text = f"{location_name} — {project_name}"
-            options.append(
-                f'<option value="{escape(project_key)}"{selected}>{escape(option_text)}</option>'
-            )
+        project_name = str(project.get("name", ""))
+        project_key = f"{location_id}:{project_id}"
+        selected = " selected" if project_key == selected_project_key else ""
+        option_text = f"{location_name} — {project_name}"
+        options.append(
+            f'<option value="{escape(project_key)}"{selected}>{escape(option_text)}</option>'
+        )
 
     return "\n".join(options)
 

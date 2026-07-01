@@ -64,6 +64,15 @@ def _get_chat_id(location: ConfigLocation) -> int | None:
 
 def _get_projects(location: ConfigLocation) -> list[ConfigProject]:
     projects = location.get("projects", [])
+    if isinstance(projects, dict):
+        return [
+            {"id": project_id, **project}
+            for project_id, project in projects.items()
+            if isinstance(project, dict)
+            and isinstance(project.get("name"), str)
+            and isinstance(project.get("time_slots"), list)
+        ]
+
     if not isinstance(projects, list):
         return []
 
