@@ -225,26 +225,16 @@ async def _upload_messages(
             except WatermarkError as exc:
                 raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
 
-            uploaded = False
-            for _ in range(1000):
-                remote_filename = _allocate_unique_filename(used_names)
-                remote_path = f"{remote_folder}/{remote_filename}"
-                try:
-                    await asyncio.to_thread(
-                        webdav_service.upload_file,
-                        watermarked_path,
-                        remote_path,
-                        False,
-                    )
-                    uploaded = True
-                    break
-                except Exception as exc:
-                    if webdav_service.is_upload_name_conflict(exc):
-                        continue
-                    raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
-
-            if not uploaded:
-                raise UploadError(WEBDAV_ERROR_MESSAGE)
+            remote_filename = _allocate_unique_filename(used_names)
+            remote_path = f"{remote_folder}/{remote_filename}"
+            try:
+                await asyncio.to_thread(
+                    webdav_service.upload_file,
+                    watermarked_path,
+                    remote_path,
+                )
+            except Exception as exc:
+                raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
             uploaded_count += 1
 
     return UploadResult(

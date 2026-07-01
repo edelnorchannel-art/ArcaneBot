@@ -150,23 +150,13 @@ class WebDAVService:
 
         raise RuntimeError(f"{operation_name} failed: {path}")
 
-    @staticmethod
-    def is_upload_name_conflict(exc: Exception) -> bool:
-        if isinstance(exc, ResourceAlreadyExists):
-            return True
-        if isinstance(exc, HTTPError):
-            return exc.status_code in (
-                HTTPStatus.CONFLICT,
-                HTTPStatus.PRECONDITION_FAILED,
-            )
-        return False
-
     def upload_file(
         self,
         local_path: str | PathLike[str],
         remote_path: str,
-        overwrite: bool = False,
+        overwrite: bool = True,
     ) -> None:
+        # Mail.ru WebDAV returns 400 on PROPFIND; webdav4 calls exists() when overwrite=False.
         self._with_retry(
             operation_name="WebDAV upload",
             path=remote_path,
