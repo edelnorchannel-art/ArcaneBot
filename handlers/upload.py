@@ -1,26 +1,48 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
 import tempfile
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any, TypedDict, cast
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from config import CORPORATE_CHAT_ID
-from keyboards.inline import get_projects_keyboard, get_time_slots_keyboard
+from keyboards.inline import (
+    get_location_projects_keyboard,
+    get_location_time_slots_keyboard,
+    get_locations_keyboard,
+)
 from keyboards.reply import get_cancel_keyboard, get_main_keyboard
-from projects import get_projects
+from services.location_access_service import LocationAccessService
+from services.location_service import get_locations, get_location_projects
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-_media_groups: dict[tuple[int, int, str], dict] = {}
+_media_groups: dict[tuple[int, int, str], MediaGroupData] = {}
 _media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
+_MONTH_NAMES = [
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+]
 
 WEBDAV_ERROR_MESSAGE = (
     "Не удалось загрузить фотографии в хранилище. Попробуйте позже."
@@ -36,6 +58,27 @@ class UploadError(Exception):
         super().__init__(user_message)
 
 
+class UploadStateData(TypedDict):
+    location: str
+    project: str
+    slot: str
+
+
+class MediaGroupData(TypedDict):
+    messages: list[Message]
+    data: UploadStateData
+
+
+@dataclass(frozen=True)
+class UploadResult:
+    location_id: str
+    location_name: str
+    project_name: str
+    upload_date: str
+    time_slot: str
+    uploaded_count: int
+
+
 def _is_image(message: Message) -> bool:
     return bool(
         message.photo
@@ -47,15 +90,38 @@ def _is_image(message: Message) -> bool:
     )
 
 
-def _get_project_name(project_id: str) -> str:
-    for project in get_projects():
+def _as_upload_state_data(data: dict[str, Any]) -> UploadStateData:
+    return cast(UploadStateData, data)
+
+
+def _get_location_project_name(location_id: str, project_id: str) -> str:
+    for project in get_location_projects(location_id):
         if project["id"] == project_id:
             return project["name"]
 
     return project_id
 
 
-def _get_message_file(message: Message):
+def _get_location_name(location_id: str) -> str:
+    for location in get_locations():
+        if location["id"] == location_id:
+            return str(location["name"])
+
+    return location_id
+
+
+def _get_location_chat_id(location_id: str) -> int | None:
+    for location in get_locations():
+        if location["id"] == location_id:
+            chat_id = location["chat_id"]
+            if chat_id is None:
+                return None
+            return int(chat_id)
+
+    return None
+
+
+def _get_message_file(message: Message) -> tuple[Any | None, str]:
     if message.photo:
         return message.photo[-1], ".jpg"
 
@@ -72,6 +138,7 @@ def _sanitize_remote_path_part(value: str) -> str:
 
 
 def _build_success_message(
+    location_name: str,
     project_name: str,
     upload_date: str,
     time_slot: str,
@@ -79,27 +146,34 @@ def _build_success_message(
 ) -> str:
     return (
         "Фотографии успешно загружены.\n\n"
+        f"Локация: {location_name}\n"
         f"Проект: {project_name}\n"
         f"Дата: {upload_date}\n"
         f"Слот: {time_slot}\n"
-        f"Количество: {count}"
+        f"Количество фотографий: {count}"
     )
 
 
 async def _upload_messages(
     messages: list[Message],
-    data: dict,
+    data: UploadStateData,
     bot: Bot,
-) -> tuple[str, str, str, int]:
+) -> UploadResult:
+    location_id = data["location"]
     project_id = data["project"]
-    time_slot = data["time"]
-    project_name = _get_project_name(project_id)
-    upload_date = date.today().strftime("%d-%m-%Y")
+    time_slot = data["slot"]
+    location_name = _get_location_name(location_id)
+    project_name = _get_location_project_name(location_id, project_id)
+    current_date = date.today()
+    upload_date = current_date.strftime("%d-%m-%Y")
     remote_folder = "/".join(
         [
-            _sanitize_remote_path_part("Фото"),
-            _sanitize_remote_path_part(upload_date),
+            _sanitize_remote_path_part("Фотографии игроков"),
+            _sanitize_remote_path_part(location_name),
             _sanitize_remote_path_part(project_name),
+            _sanitize_remote_path_part(str(current_date.year)),
+            _sanitize_remote_path_part(_MONTH_NAMES[current_date.month - 1]),
+            _sanitize_remote_path_part(upload_date),
             _sanitize_remote_path_part(time_slot),
         ]
     )
@@ -135,7 +209,14 @@ async def _upload_messages(
                 raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
             uploaded_count += 1
 
-    return project_name, upload_date, time_slot, uploaded_count
+    return UploadResult(
+        location_id=location_id,
+        location_name=location_name,
+        project_name=project_name,
+        upload_date=upload_date,
+        time_slot=time_slot,
+        uploaded_count=uploaded_count,
+    )
 
 
 async def _send_upload_error(message: Message, error: UploadError) -> None:
@@ -143,18 +224,44 @@ async def _send_upload_error(message: Message, error: UploadError) -> None:
     await message.answer(error.user_message)
 
 
-async def _send_success_copy(bot: Bot, success_message: str) -> None:
-    if not CORPORATE_CHAT_ID:
-        logger.warning("CORPORATE_CHAT_ID is not set, success copy was not sent")
+async def _send_success_copy(
+    bot: Bot,
+    location_id: str,
+    success_message: str,
+) -> None:
+    chat_id = _get_location_chat_id(location_id)
+    if chat_id is None:
+        logger.warning("Location chat_id is not set, success copy was not sent")
         return
 
     try:
         await bot.send_message(
-            chat_id=int(CORPORATE_CHAT_ID),
+            chat_id=chat_id,
             text=success_message,
         )
     except Exception:
-        logger.exception("Failed to send success upload copy to corporate chat")
+        logger.exception("Failed to send success upload copy to location chat")
+
+
+async def _finish_successful_upload(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    result: UploadResult,
+) -> None:
+    await state.clear()
+    success_message = _build_success_message(
+        result.location_name,
+        result.project_name,
+        result.upload_date,
+        result.time_slot,
+        result.uploaded_count,
+    )
+    await message.answer(
+        success_message,
+        reply_markup=get_main_keyboard(),
+    )
+    await _send_success_copy(bot, result.location_id, success_message)
 
 
 async def _send_media_group_result(
@@ -169,7 +276,7 @@ async def _send_media_group_result(
     messages = media_group.get("messages", [])
     if messages:
         try:
-            project_name, upload_date, time_slot, uploaded_count = await _upload_messages(
+            result = await _upload_messages(
                 messages,
                 media_group["data"],
                 bot,
@@ -178,30 +285,25 @@ async def _send_media_group_result(
             await _send_upload_error(messages[-1], error)
             return
 
-        await state.clear()
-        success_message = _build_success_message(
-            project_name,
-            upload_date,
-            time_slot,
-            uploaded_count,
-        )
-        await messages[-1].answer(
-            success_message,
-            reply_markup=get_main_keyboard(),
-        )
-        await _send_success_copy(bot, success_message)
+        await _finish_successful_upload(messages[-1], state, bot, result)
 
 
 @router.message(F.text == "Загрузить фотографии")
-async def upload_photos(message: Message, state: FSMContext) -> None:
-    await state.set_state(UploadPhotosState.choosing_project)
+async def upload_photos(message: Message, state: FSMContext, bot: Bot) -> None:
+    if message.from_user is None:
+        return
+
+    access_service = LocationAccessService(bot)
+    available_locations = await access_service.get_available_locations(message.from_user.id)
+
+    await state.set_state(UploadPhotosState.choosing_location)
     await message.answer(
         "Выберите локацию",
         reply_markup=get_cancel_keyboard(),
     )
     await message.answer(
         "Список локаций:",
-        reply_markup=get_projects_keyboard(),
+        reply_markup=get_locations_keyboard(available_locations),
     )
 
 
@@ -214,15 +316,29 @@ async def cancel_upload(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(UploadPhotosState.choosing_location, F.data.startswith("location:"))
+async def choose_location(callback: CallbackQuery, state: FSMContext) -> None:
+    location_id = callback.data.split(":", maxsplit=1)[1]
+    await state.update_data(location=location_id)
+    await state.set_state(UploadPhotosState.choosing_project)
+    if isinstance(callback.message, Message):
+        await callback.message.answer(
+            "Выберите проект:",
+            reply_markup=get_location_projects_keyboard(location_id),
+        )
+    await callback.answer()
+
+
 @router.callback_query(UploadPhotosState.choosing_project, F.data.startswith("project:"))
 async def choose_project(callback: CallbackQuery, state: FSMContext) -> None:
     project_id = callback.data.split(":", maxsplit=1)[1]
+    data = _as_upload_state_data(await state.get_data())
     await state.update_data(project=project_id)
     await state.set_state(UploadPhotosState.choosing_slot)
     if isinstance(callback.message, Message):
         await callback.message.answer(
             "Выберите временной слот:",
-            reply_markup=get_time_slots_keyboard(project_id),
+            reply_markup=get_location_time_slots_keyboard(data["location"], project_id),
         )
     await callback.answer()
 
@@ -230,9 +346,9 @@ async def choose_project(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(UploadPhotosState.choosing_slot, F.data.startswith("slot:"))
 async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
     time_slot = callback.data.split(":", maxsplit=1)[1]
-    data = await state.get_data()
-    project_name = _get_project_name(data["project"])
-    await state.update_data(time=time_slot)
+    data = _as_upload_state_data(await state.get_data())
+    project_name = _get_location_project_name(data["location"], data["project"])
+    await state.update_data(slot=time_slot)
     await state.set_state(UploadPhotosState.waiting_photos)
     if isinstance(callback.message, Message):
         await callback.message.answer(
@@ -246,7 +362,7 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
     if not _is_image(message):
         return
 
-    data = await state.get_data()
+    data = _as_upload_state_data(await state.get_data())
 
     if message.media_group_id and message.from_user:
         key = (message.chat.id, message.from_user.id, message.media_group_id)
@@ -261,7 +377,7 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
         return
 
     try:
-        project_name, upload_date, time_slot, uploaded_count = await _upload_messages(
+        result = await _upload_messages(
             [message],
             data,
             bot,
@@ -270,15 +386,4 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
         await _send_upload_error(message, error)
         return
 
-    await state.clear()
-    success_message = _build_success_message(
-        project_name,
-        upload_date,
-        time_slot,
-        uploaded_count,
-    )
-    await message.answer(
-        success_message,
-        reply_markup=get_main_keyboard(),
-    )
-    await _send_success_copy(bot, success_message)
+    await _finish_successful_upload(message, state, bot, result)

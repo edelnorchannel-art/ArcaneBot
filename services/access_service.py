@@ -1,33 +1,17 @@
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware, Bot
-from aiogram.enums import ChatMemberStatus
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from config import CORPORATE_CHAT_ID
+from services.location_access_service import LocationAccessService
 
 ACCESS_DENIED_MESSAGE = "У вас нет доступа к использованию бота."
 
-_ALLOWED_STATUSES = {
-    ChatMemberStatus.CREATOR,
-    ChatMemberStatus.ADMINISTRATOR,
-    ChatMemberStatus.MEMBER,
-    ChatMemberStatus.RESTRICTED,
-}
-
 
 async def is_user_allowed(bot: Bot, user_id: int) -> bool:
-    if not CORPORATE_CHAT_ID:
-        return False
-
-    try:
-        member = await bot.get_chat_member(
-            chat_id=int(CORPORATE_CHAT_ID),
-            user_id=user_id,
-        )
-        return member.status in _ALLOWED_STATUSES
-    except Exception:
-        return False
+    access_service = LocationAccessService(bot)
+    available_locations = await access_service.get_available_locations(user_id)
+    return bool(available_locations)
 
 
 class AccessMiddleware(BaseMiddleware):
