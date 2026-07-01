@@ -303,6 +303,7 @@ async def _send_media_group_result(
 
     messages = media_group.get("messages", [])
     if messages:
+        await messages[-1].answer("Ожидайте, фотографии обрабатываются...")
         try:
             result = await _upload_messages(
                 messages,
@@ -394,7 +395,8 @@ async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(UploadPhotosState.waiting_photos)
     if isinstance(callback.message, Message):
         await callback.message.answer(
-            f"Загрузите фотографии после игры в {time_slot}, на локации {project_name}"
+            f"Загрузите фотографии после игры в {time_slot}, на локации {project_name}\n"
+            "Не больше 10 изображений за раз!"
         )
     await callback.answer()
 
@@ -418,6 +420,7 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
 
         return
 
+    await message.answer("Ожидайте, фотографии обрабатываются...")
     try:
         result = await _upload_messages(
             [message],
