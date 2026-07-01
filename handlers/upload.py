@@ -21,6 +21,7 @@ from keyboards.inline import (
 from keyboards.reply import get_cancel_keyboard, get_main_keyboard
 from services.location_access_service import LocationAccessService
 from services.location_service import get_locations, get_location_projects
+from services.watermark_service import WatermarkError, apply_watermark
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
 
@@ -49,6 +50,9 @@ WEBDAV_ERROR_MESSAGE = (
 )
 DOWNLOAD_ERROR_MESSAGE = (
     "Не удалось скачать файл из Telegram. Попробуйте отправить фотографии снова."
+)
+WATERMARK_ERROR_MESSAGE = (
+    "Не удалось обработать фотографию. Попробуйте отправить файл в формате JPG или HEIC."
 )
 
 
@@ -191,17 +195,27 @@ async def _upload_messages(
             if telegram_file is None:
                 continue
 
-            local_path = Path(temp_dir) / f"{index}{suffix}"
+            downloaded_path = Path(temp_dir) / f"{index}{suffix}"
             try:
-                await bot.download(telegram_file, destination=local_path)
+                await bot.download(telegram_file, destination=downloaded_path)
             except Exception as exc:
                 raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
 
-            remote_path = f"{remote_folder}/{local_path.name}"
+            watermarked_path = Path(temp_dir) / f"{index}.jpg"
+            try:
+                await asyncio.to_thread(
+                    apply_watermark,
+                    downloaded_path,
+                    watermarked_path,
+                )
+            except WatermarkError as exc:
+                raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+
+            remote_path = f"{remote_folder}/{watermarked_path.name}"
             try:
                 await asyncio.to_thread(
                     webdav_service.upload_file,
-                    local_path,
+                    watermarked_path,
                     remote_path,
                     True,
                 )
