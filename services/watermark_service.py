@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import logging
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -25,6 +27,31 @@ class WatermarkError(Exception):
     pass
 
 
+def _release_memory() -> None:
+    gc.collect()
+    if sys.platform != "linux":
+        return
+
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _detach_image(image: Image.Image, opened_image: Image.Image) -> Image.Image:
+    if image is opened_image:
+        return image.copy()
+    return image
+
+
+def _replace_image(current: Image.Image, updated: Image.Image) -> Image.Image:
+    if updated is not current:
+        current.close()
+    return updated
+
+
 def _resize_logo(logo: Image.Image, photo: Image.Image) -> Image.Image:
     is_vertical = photo.height > photo.width
 
@@ -44,29 +71,42 @@ def apply_watermark(source_path: Path, destination_path: Path) -> None:
     if not WATERMARK_PATH.is_file():
         raise WatermarkError(f"Watermark file not found: {WATERMARK_PATH}")
 
+    photo: Image.Image | None = None
+    logo: Image.Image | None = None
+
     try:
-        with Image.open(source_path) as photo:
-            photo = ImageOps.exif_transpose(photo)
-            photo = photo.convert("RGBA")
+        with Image.open(source_path) as source:
+            transposed = ImageOps.exif_transpose(source)
+            photo = _detach_image(transposed, source)
 
-            with Image.open(WATERMARK_PATH) as logo:
-                logo = logo.convert("RGBA")
-                logo = _resize_logo(logo, photo)
-                logo_height = logo.height
+        if photo.mode != "RGB":
+            photo = _replace_image(photo, photo.convert("RGB"))
 
-                position = (
-                    WATERMARK_MARGIN,
-                    photo.height - logo_height - WATERMARK_MARGIN,
-                )
-                photo.paste(logo, position, logo)
+        with Image.open(WATERMARK_PATH) as logo_source:
+            logo_rgba = logo_source.convert("RGBA")
+            logo = _resize_logo(logo_rgba, photo)
+            if logo is not logo_rgba:
+                logo_rgba.close()
 
-            photo.convert("RGB").save(
-                destination_path,
-                "JPEG",
-                quality=JPEG_QUALITY,
+            position = (
+                WATERMARK_MARGIN,
+                photo.height - logo.height - WATERMARK_MARGIN,
             )
+            photo.paste(logo, position, logo)
+
+        photo.save(
+            destination_path,
+            "JPEG",
+            quality=JPEG_QUALITY,
+        )
     except WatermarkError:
         raise
     except Exception as exc:
         logger.exception("Failed to apply watermark to %s", source_path)
         raise WatermarkError("Failed to process image") from exc
+    finally:
+        if logo is not None:
+            logo.close()
+        if photo is not None:
+            photo.close()
+        _release_memory()

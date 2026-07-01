@@ -22,7 +22,8 @@ from keyboards.inline import (
 from keyboards.reply import get_cancel_keyboard, get_main_keyboard
 from services.location_access_service import LocationAccessService
 from services.location_service import get_locations, get_location_projects
-from services.watermark_service import WatermarkError, apply_watermark
+from services.image_processing_service import apply_watermark_async
+from services.watermark_service import WatermarkError
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
 
@@ -239,8 +240,7 @@ async def _upload_messages(
 
             watermarked_path = Path(temp_dir) / f"{index}.jpg"
             try:
-                await asyncio.to_thread(
-                    apply_watermark,
+                await apply_watermark_async(
                     downloaded_path,
                     watermarked_path,
                 )
@@ -290,8 +290,7 @@ async def _send_watermarked_photos(
                 raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
 
             try:
-                await asyncio.to_thread(
-                    apply_watermark,
+                await apply_watermark_async(
                     downloaded_path,
                     watermarked_path,
                 )
