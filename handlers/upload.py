@@ -5,9 +5,10 @@ import logging
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict, cast
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -32,6 +33,8 @@ _media_groups: dict[tuple[int, int, str], MediaGroupData] = {}
 _media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
 _logo_media_groups: dict[tuple[int, int, str], list[Message]] = {}
 _logo_media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+DAY_BOUNDARY_HOUR = 7
 _MONTH_NAMES = [
     "Январь",
     "Февраль",
@@ -143,6 +146,23 @@ def _sanitize_remote_path_part(value: str) -> str:
     return safe_value.strip(" .") or "unknown"
 
 
+def _now_moscow() -> datetime:
+    return datetime.now(MOSCOW_TZ)
+
+
+def _resolve_upload_date(time_slot: str, now: datetime | None = None) -> date:
+    moscow_now = _now_moscow() if now is None else now.astimezone(MOSCOW_TZ)
+    slot_hour = int(time_slot.split(":", maxsplit=1)[0])
+
+    if slot_hour < DAY_BOUNDARY_HOUR:
+        return moscow_now.date()
+
+    if moscow_now.hour < DAY_BOUNDARY_HOUR:
+        return moscow_now.date() - timedelta(days=1)
+
+    return moscow_now.date()
+
+
 def _allocate_unique_filename(used_names: set[str]) -> str:
     index = 1
     while True:
@@ -180,7 +200,7 @@ async def _upload_messages(
     time_slot = data["slot"]
     location_name = _get_location_name(location_id)
     project_name = _get_location_project_name(location_id, project_id)
-    current_date = date.today()
+    current_date = _resolve_upload_date(time_slot)
     upload_date = current_date.strftime("%d-%m-%Y")
     remote_folder = "/".join(
         [
