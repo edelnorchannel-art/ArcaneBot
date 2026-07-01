@@ -30,9 +30,44 @@ class WebDAVService:
         except ResourceNotFound:
             return False
         except HTTPError as exc:
-            if exc.status_code == HTTPStatus.NOT_FOUND:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.BAD_REQUEST):
                 return False
             raise
+
+    @staticmethod
+    def _listing_paths(folder_path: str) -> tuple[str, ...]:
+        normalized = folder_path.strip("/")
+        if not normalized:
+            return ("/",)
+
+        with_slash = f"{normalized}/"
+        if with_slash == normalized:
+            return (normalized,)
+
+        return (with_slash, normalized)
+
+    @staticmethod
+    def _parse_listing_entries(entries: list[str] | list[dict[str, object]], folder_path: str) -> set[str]:
+        folder_name = Path(folder_path.strip("/")).name
+        names: set[str] = set()
+
+        for entry in entries:
+            if isinstance(entry, dict):
+                entry_path = str(entry.get("name") or entry.get("path") or "")
+            else:
+                entry_path = str(entry)
+
+            entry_path = entry_path.rstrip("/")
+            if not entry_path:
+                continue
+
+            name = Path(entry_path).name
+            if not name or name == folder_name:
+                continue
+
+            names.add(name)
+
+        return names
 
     def create_folder(self, path: str) -> None:
         try:
@@ -56,39 +91,33 @@ class WebDAVService:
             )
 
     def list_file_names(self, folder_path: str) -> set[str]:
-        if not self.folder_exists(folder_path):
-            return set()
-
         def _collect() -> set[str]:
-            try:
-                entries = self.client.ls(folder_path, detail=False)
-            except ResourceNotFound:
-                return set()
-            except HTTPError as exc:
-                if exc.status_code == HTTPStatus.NOT_FOUND:
-                    return set()
-                raise
+            last_error: Exception | None = None
 
-            names: set[str] = set()
-            for entry in entries:
-                entry_path = entry if isinstance(entry, str) else str(entry)
-                entry_path = entry_path.rstrip("/")
-                if not entry_path:
+            for listing_path in self._listing_paths(folder_path):
+                try:
+                    entries = self.client.ls(listing_path, detail=False)
+                except ResourceNotFound:
                     continue
+                except HTTPError as exc:
+                    if exc.status_code in (
+                        HTTPStatus.NOT_FOUND,
+                        HTTPStatus.BAD_REQUEST,
+                    ):
+                        last_error = exc
+                        continue
+                    raise
 
-                name = Path(entry_path).name
-                if not name:
-                    continue
+                return self._parse_listing_entries(entries, folder_path)
 
-                item_path = (
-                    entry_path
-                    if "/" in entry_path
-                    else f"{folder_path.rstrip('/')}/{name}"
+            if last_error is not None:
+                logger.warning(
+                    "WebDAV listing unavailable for %s, assuming empty folder",
+                    folder_path,
+                    exc_info=last_error,
                 )
-                if self.client.isfile(item_path):
-                    names.add(name)
 
-            return names
+            return set()
 
         return self._with_retry(
             operation_name="WebDAV list files",
@@ -120,6 +149,17 @@ class WebDAVService:
                 time.sleep(1)
 
         raise RuntimeError(f"{operation_name} failed: {path}")
+
+    @staticmethod
+    def is_upload_name_conflict(exc: Exception) -> bool:
+        if isinstance(exc, ResourceAlreadyExists):
+            return True
+        if isinstance(exc, HTTPError):
+            return exc.status_code in (
+                HTTPStatus.CONFLICT,
+                HTTPStatus.PRECONDITION_FAILED,
+            )
+        return False
 
     def upload_file(
         self,
