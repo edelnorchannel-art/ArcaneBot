@@ -27,6 +27,10 @@ class WatermarkError(Exception):
     pass
 
 
+def release_memory() -> None:
+    _release_memory()
+
+
 def _release_memory() -> None:
     gc.collect()
     if sys.platform != "linux":

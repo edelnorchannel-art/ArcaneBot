@@ -22,7 +22,10 @@ from keyboards.inline import (
 from keyboards.reply import get_cancel_keyboard, get_main_keyboard
 from services.location_access_service import LocationAccessService
 from services.location_service import get_locations, get_location_projects
-from services.image_processing_service import apply_watermark_async
+from services.image_processing_service import (
+    apply_watermarks_batch_async,
+    release_memory_async,
+)
 from services.watermark_service import WatermarkError
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
@@ -32,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _media_groups: dict[tuple[int, int, str], MediaGroupData] = {}
 _media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
-_logo_media_groups: dict[tuple[int, int, str], list[Message]] = {}
+_logo_media_groups: dict[tuple[int, int, str], LogoMediaGroupData] = {}
 _logo_media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 DAY_BOUNDARY_HOUR = 7
@@ -75,8 +78,20 @@ class UploadStateData(TypedDict):
 
 
 class MediaGroupData(TypedDict):
-    messages: list[Message]
+    items: list[PhotoFileItem]
     data: UploadStateData
+    reply_message: Message
+
+
+class LogoMediaGroupData(TypedDict):
+    items: list[PhotoFileItem]
+    reply_message: Message
+
+
+@dataclass(frozen=True)
+class PhotoFileItem:
+    telegram_file: Any
+    suffix: str
 
 
 @dataclass(frozen=True)
@@ -142,6 +157,14 @@ def _get_message_file(message: Message) -> tuple[Any | None, str]:
     return None, ".jpg"
 
 
+def _get_photo_file_item(message: Message) -> PhotoFileItem | None:
+    telegram_file, suffix = _get_message_file(message)
+    if telegram_file is None:
+        return None
+
+    return PhotoFileItem(telegram_file=telegram_file, suffix=suffix)
+
+
 def _sanitize_remote_path_part(value: str) -> str:
     safe_value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", value)
     return safe_value.strip(" .") or "unknown"
@@ -192,7 +215,7 @@ def _build_success_message(
 
 
 async def _upload_messages(
-    messages: list[Message],
+    photo_items: list[PhotoFileItem],
     data: UploadStateData,
     bot: Bot,
 ) -> UploadResult:
@@ -227,26 +250,24 @@ async def _upload_messages(
         raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        for index, message in enumerate(messages, start=1):
-            telegram_file, suffix = _get_message_file(message)
-            if telegram_file is None:
-                continue
+        watermark_pairs: list[tuple[Path, Path]] = []
 
-            downloaded_path = Path(temp_dir) / f"{index}{suffix}"
+        for index, photo_item in enumerate(photo_items, start=1):
+            downloaded_path = Path(temp_dir) / f"{index}{photo_item.suffix}"
             try:
-                await bot.download(telegram_file, destination=downloaded_path)
+                await bot.download(photo_item.telegram_file, destination=downloaded_path)
             except Exception as exc:
                 raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
 
             watermarked_path = Path(temp_dir) / f"{index}.jpg"
-            try:
-                await apply_watermark_async(
-                    downloaded_path,
-                    watermarked_path,
-                )
-            except WatermarkError as exc:
-                raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+            watermark_pairs.append((downloaded_path, watermarked_path))
 
+        try:
+            await apply_watermarks_batch_async(watermark_pairs)
+        except WatermarkError as exc:
+            raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+
+        for index, (_, watermarked_path) in enumerate(watermark_pairs, start=1):
             remote_filename = _allocate_unique_filename(used_names)
             remote_path = f"{remote_folder}/{remote_filename}"
             try:
@@ -259,6 +280,8 @@ async def _upload_messages(
                 raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
             uploaded_count += 1
 
+    await release_memory_async()
+
     return UploadResult(
         location_id=location_id,
         location_name=location_name,
@@ -270,35 +293,36 @@ async def _upload_messages(
 
 
 async def _send_watermarked_photos(
-    messages: list[Message],
+    photo_items: list[PhotoFileItem],
     bot: Bot,
+    reply_message: Message,
 ) -> int:
     sent_count = 0
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        for index, message in enumerate(messages, start=1):
-            telegram_file, suffix = _get_message_file(message)
-            if telegram_file is None:
-                continue
+        watermark_pairs: list[tuple[Path, Path]] = []
 
-            downloaded_path = Path(temp_dir) / f"{index}{suffix}"
+        for index, photo_item in enumerate(photo_items, start=1):
+            downloaded_path = Path(temp_dir) / f"{index}{photo_item.suffix}"
             watermarked_path = Path(temp_dir) / f"{index}.jpg"
 
             try:
-                await bot.download(telegram_file, destination=downloaded_path)
+                await bot.download(photo_item.telegram_file, destination=downloaded_path)
             except Exception as exc:
                 raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
 
-            try:
-                await apply_watermark_async(
-                    downloaded_path,
-                    watermarked_path,
-                )
-            except WatermarkError as exc:
-                raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+            watermark_pairs.append((downloaded_path, watermarked_path))
 
-            await message.answer_document(FSInputFile(watermarked_path))
+        try:
+            await apply_watermarks_batch_async(watermark_pairs)
+        except WatermarkError as exc:
+            raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+
+        for _, watermarked_path in watermark_pairs:
+            await reply_message.answer_document(FSInputFile(watermarked_path))
             sent_count += 1
+
+    await release_memory_async()
 
     return sent_count
 
@@ -357,20 +381,22 @@ async def _send_media_group_result(
     media_group = _media_groups.pop(key, {})
     _media_group_tasks.pop(key, None)
 
-    messages = media_group.get("messages", [])
-    if messages:
-        await messages[-1].answer("Ожидайте, фотографии обрабатываются...")
+    photo_items = media_group.get("items", [])
+    reply_message = media_group.get("reply_message")
+    upload_data = media_group.get("data")
+    if photo_items and isinstance(reply_message, Message) and upload_data:
+        await reply_message.answer("Ожидайте, фотографии обрабатываются...")
         try:
             result = await _upload_messages(
-                messages,
-                media_group["data"],
+                photo_items,
+                upload_data,
                 bot,
             )
         except UploadError as error:
-            await _send_upload_error(messages[-1], error)
+            await _send_upload_error(reply_message, error)
             return
 
-        await _finish_successful_upload(messages[-1], state, bot, result)
+        await _finish_successful_upload(reply_message, state, bot, result)
 
 
 async def _send_logo_media_group_result(
@@ -379,21 +405,23 @@ async def _send_logo_media_group_result(
     state: FSMContext,
 ) -> None:
     await asyncio.sleep(1)
-    messages = _logo_media_groups.pop(key, [])
+    media_group = _logo_media_groups.pop(key, {})
     _logo_media_group_tasks.pop(key, None)
 
-    if not messages:
+    photo_items = media_group.get("items", [])
+    reply_message = media_group.get("reply_message")
+    if not photo_items or not isinstance(reply_message, Message):
         return
 
-    await messages[-1].answer("Ожидайте, фотографии обрабатываются...")
+    await reply_message.answer("Ожидайте, фотографии обрабатываются...")
     try:
-        await _send_watermarked_photos(messages, bot)
+        await _send_watermarked_photos(photo_items, bot, reply_message)
     except UploadError as error:
-        await _send_upload_error(messages[-1], error)
+        await _send_upload_error(reply_message, error)
         return
 
     await state.clear()
-    await messages[-1].answer(
+    await reply_message.answer(
         "Фотографии обработаны.",
         reply_markup=get_main_keyboard(),
     )
@@ -500,8 +528,17 @@ async def handle_logo_photos(message: Message, state: FSMContext, bot: Bot) -> N
         return
 
     if message.media_group_id and message.from_user:
+        photo_item = _get_photo_file_item(message)
+        if photo_item is None:
+            return
+
         key = (message.chat.id, message.from_user.id, message.media_group_id)
-        _logo_media_groups.setdefault(key, []).append(message)
+        media_group = _logo_media_groups.setdefault(
+            key,
+            {"items": [], "reply_message": message},
+        )
+        media_group["items"].append(photo_item)
+        media_group["reply_message"] = message
 
         if key not in _logo_media_group_tasks:
             _logo_media_group_tasks[key] = asyncio.create_task(
@@ -510,9 +547,13 @@ async def handle_logo_photos(message: Message, state: FSMContext, bot: Bot) -> N
 
         return
 
+    photo_item = _get_photo_file_item(message)
+    if photo_item is None:
+        return
+
     await message.answer("Ожидайте, фотографии обрабатываются...")
     try:
-        await _send_watermarked_photos([message], bot)
+        await _send_watermarked_photos([photo_item], bot, message)
     except UploadError as error:
         await _send_upload_error(message, error)
         return
@@ -532,9 +573,17 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
     data = _as_upload_state_data(await state.get_data())
 
     if message.media_group_id and message.from_user:
+        photo_item = _get_photo_file_item(message)
+        if photo_item is None:
+            return
+
         key = (message.chat.id, message.from_user.id, message.media_group_id)
-        media_group = _media_groups.setdefault(key, {"messages": [], "data": data})
-        media_group["messages"].append(message)
+        media_group = _media_groups.setdefault(
+            key,
+            {"items": [], "data": data, "reply_message": message},
+        )
+        media_group["items"].append(photo_item)
+        media_group["reply_message"] = message
 
         if key not in _media_group_tasks:
             _media_group_tasks[key] = asyncio.create_task(
@@ -543,10 +592,14 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
 
         return
 
+    photo_item = _get_photo_file_item(message)
+    if photo_item is None:
+        return
+
     await message.answer("Ожидайте, фотографии обрабатываются...")
     try:
         result = await _upload_messages(
-            [message],
+            [photo_item],
             data,
             bot,
         )
