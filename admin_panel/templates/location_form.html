@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+  </head>
+  <body>
+    <h1>{{ title }}</h1>
+    <form method="post" action="{{ action }}">
+      <p>
+        <label for="name">Название</label>
+        <input id="name" name="name" type="text" value="{{ name }}">
+      </p>
+      <p>
+        <label for="chat_id">chat_id</label>
+        <input id="chat_id" name="chat_id" type="text" value="{{ chat_id }}">
+      </p>
+      <button type="submit">Сохранить</button>
+    </form>
+    <p><a href="/admin/locations">Назад</a></p>
+  </body>
+</html>

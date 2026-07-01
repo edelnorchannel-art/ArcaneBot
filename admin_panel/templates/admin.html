@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Админ-панель</title>
+  </head>
+  <body>
+    <nav>
+      <a href="/admin/locations"><button type="button">Локации</button></a>
+      <a href="/admin/projects"><button type="button">Проекты</button></a>
+      <a href="/admin/slots"><button type="button">Слоты</button></a>
+      <a href="/admin/backups"><button type="button">Резервные копии</button></a>
+      <form method="post" action="/admin/backup" style="display:inline">
+        <button type="submit">Создать резервную копию</button>
+      </form>
+      <a href="/logout"><button type="button">Выход</button></a>
+    </nav>
+  </body>
+</html>

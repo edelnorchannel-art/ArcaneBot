@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+  </head>
+  <body>
+    <h1>{{ title }}</h1>
+    <form method="post" action="{{ action }}">
+      <p>
+        <label for="location_id">Локация</label>
+        <select id="location_id" name="location_id">
+          {{ locations_options }}
+        </select>
+      </p>
+      <p>
+        <label for="name">Название проекта</label>
+        <input id="name" name="name" type="text" value="{{ name }}">
+      </p>
+      <button type="submit">Сохранить</button>
+    </form>
+    <p><a href="/admin/projects">Назад</a></p>
+  </body>
+</html>
