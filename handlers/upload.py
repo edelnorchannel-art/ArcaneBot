@@ -141,6 +141,16 @@ def _sanitize_remote_path_part(value: str) -> str:
     return safe_value.strip(" .") or "unknown"
 
 
+def _allocate_unique_filename(used_names: set[str]) -> str:
+    index = 1
+    while True:
+        candidate = f"{index}.jpg"
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        index += 1
+
+
 def _build_success_message(
     location_name: str,
     project_name: str,
@@ -186,6 +196,10 @@ async def _upload_messages(
     try:
         webdav_service = WebDAVService()
         await asyncio.to_thread(webdav_service.create_folders, remote_folder)
+        used_names = await asyncio.to_thread(
+            webdav_service.list_file_names,
+            remote_folder,
+        )
     except Exception as exc:
         raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
 
@@ -211,13 +225,14 @@ async def _upload_messages(
             except WatermarkError as exc:
                 raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
 
-            remote_path = f"{remote_folder}/{watermarked_path.name}"
+            remote_filename = _allocate_unique_filename(used_names)
+            remote_path = f"{remote_folder}/{remote_filename}"
             try:
                 await asyncio.to_thread(
                     webdav_service.upload_file,
                     watermarked_path,
                     remote_path,
-                    True,
+                    False,
                 )
             except Exception as exc:
                 raise UploadError(WEBDAV_ERROR_MESSAGE) from exc

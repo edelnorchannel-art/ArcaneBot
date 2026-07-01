@@ -2,6 +2,7 @@ import logging
 import time
 from http import HTTPStatus
 from os import PathLike
+from pathlib import Path
 from typing import Callable, TypeVar
 
 from webdav4.client import Client, HTTPError, ResourceAlreadyExists, ResourceNotFound
@@ -53,6 +54,47 @@ class WebDAVService:
                 path=current_path,
                 operation=lambda folder_path=current_path: self.create_folder(folder_path),
             )
+
+    def list_file_names(self, folder_path: str) -> set[str]:
+        if not self.folder_exists(folder_path):
+            return set()
+
+        def _collect() -> set[str]:
+            try:
+                entries = self.client.ls(folder_path, detail=False)
+            except ResourceNotFound:
+                return set()
+            except HTTPError as exc:
+                if exc.status_code == HTTPStatus.NOT_FOUND:
+                    return set()
+                raise
+
+            names: set[str] = set()
+            for entry in entries:
+                entry_path = entry if isinstance(entry, str) else str(entry)
+                entry_path = entry_path.rstrip("/")
+                if not entry_path:
+                    continue
+
+                name = Path(entry_path).name
+                if not name:
+                    continue
+
+                item_path = (
+                    entry_path
+                    if "/" in entry_path
+                    else f"{folder_path.rstrip('/')}/{name}"
+                )
+                if self.client.isfile(item_path):
+                    names.add(name)
+
+            return names
+
+        return self._with_retry(
+            operation_name="WebDAV list files",
+            path=folder_path,
+            operation=_collect,
+        )
 
     def _with_retry(
         self,
