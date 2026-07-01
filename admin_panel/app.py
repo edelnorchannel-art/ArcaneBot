@@ -282,47 +282,14 @@ def _render_project_form(
     )
 
 
-def _render_slots_page() -> str:
-    template = (templates_dir / "slots.html").read_text(encoding="utf-8")
-    rows = []
-
-    for location in _get_locations():
-        location_id = escape(str(location.get("id", "")))
-        location_name = escape(str(location.get("name", "")))
-
-        for project in _get_projects(location):
-            project_id = escape(str(project.get("id", "")))
-            project_name = escape(str(project.get("name", "")))
-
-            for index, time_slot in enumerate(_get_time_slots(project)):
-                rows.append(
-                    "<tr>"
-                    f"<td>{location_name}</td>"
-                    f"<td>{project_name}</td>"
-                    f"<td>{escape(time_slot)}</td>"
-                    "<td>"
-                    f'<a href="/admin/slots/{location_id}/{project_id}/{index}/edit">'
-                    '<button type="button">Редактировать</button>'
-                    "</a>"
-                    f'<form method="post" action="/admin/slots/{location_id}/{project_id}/{index}/delete" '
-                    'style="display:inline">'
-                    '<button type="submit">Удалить</button>'
-                    "</form>"
-                    "</td>"
-                    "</tr>"
-                )
-
-    return template.replace("{{ slots_rows }}", "\n".join(rows))
-
-
-def _render_slot_form(
-    title: str,
-    action: str,
-    time_slot: str = "",
+def _build_project_options(
     selected_project_key: str = "",
+    include_all_option: bool = False,
 ) -> str:
-    template = (templates_dir / "slot_form.html").read_text(encoding="utf-8")
     options = []
+    if include_all_option:
+        selected = " selected" if not selected_project_key else ""
+        options.append(f'<option value=""{selected}>Все проекты</option>')
 
     for location in _get_locations():
         location_id = str(location.get("id", ""))
@@ -338,11 +305,64 @@ def _render_slot_form(
                 f'<option value="{escape(project_key)}"{selected}>{escape(option_text)}</option>'
             )
 
+    return "\n".join(options)
+
+
+def _render_slots_page(selected_project_key: str = "") -> str:
+    template = (templates_dir / "slots.html").read_text(encoding="utf-8")
+    rows = []
+
+    for location in _get_locations():
+        location_id = str(location.get("id", ""))
+        escaped_location_id = escape(location_id)
+        location_name = escape(str(location.get("name", "")))
+
+        for project in _get_projects(location):
+            project_id = str(project.get("id", ""))
+            project_key = f"{location_id}:{project_id}"
+            if selected_project_key and project_key != selected_project_key:
+                continue
+
+            escaped_project_id = escape(project_id)
+            project_name = escape(str(project.get("name", "")))
+
+            for index, time_slot in enumerate(_get_time_slots(project)):
+                rows.append(
+                    "<tr>"
+                    f"<td>{location_name}</td>"
+                    f"<td>{project_name}</td>"
+                    f"<td>{escape(time_slot)}</td>"
+                    "<td>"
+                    f'<a href="/admin/slots/{escaped_location_id}/{escaped_project_id}/{index}/edit">'
+                    '<button type="button">Редактировать</button>'
+                    "</a>"
+                    f'<form method="post" action="/admin/slots/{escaped_location_id}/{escaped_project_id}/{index}/delete" '
+                    'style="display:inline">'
+                    '<button type="submit">Удалить</button>'
+                    "</form>"
+                    "</td>"
+                    "</tr>"
+                )
+
+    return (
+        template
+        .replace("{{ projects_filter_options }}", _build_project_options(selected_project_key, True))
+        .replace("{{ slots_rows }}", "\n".join(rows))
+    )
+
+
+def _render_slot_form(
+    title: str,
+    action: str,
+    time_slot: str = "",
+    selected_project_key: str = "",
+) -> str:
+    template = (templates_dir / "slot_form.html").read_text(encoding="utf-8")
     return (
         template
         .replace("{{ title }}", escape(title))
         .replace("{{ action }}", escape(action))
-        .replace("{{ projects_options }}", "\n".join(options))
+        .replace("{{ projects_options }}", _build_project_options(selected_project_key))
         .replace("{{ time }}", escape(time_slot))
     )
 
@@ -640,8 +660,8 @@ async def delete_project(location_id: str, project_id: str) -> RedirectResponse:
 
 
 @app.get("/admin/slots", response_class=HTMLResponse)
-async def admin_slots_page() -> str:
-    return _render_slots_page()
+async def admin_slots_page(project_key: str = "") -> str:
+    return _render_slots_page(project_key)
 
 
 @app.get("/admin/slots/add", response_class=HTMLResponse)

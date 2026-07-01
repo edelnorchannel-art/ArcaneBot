@@ -296,6 +296,20 @@ async def upload_photos(message: Message, state: FSMContext, bot: Bot) -> None:
     access_service = LocationAccessService(bot)
     available_locations = await access_service.get_available_locations(message.from_user.id)
 
+    if len(available_locations) == 1:
+        location_id = str(available_locations[0]["id"])
+        await state.update_data(location=location_id)
+        await state.set_state(UploadPhotosState.choosing_project)
+        await message.answer(
+            "Выберите проект:",
+            reply_markup=get_cancel_keyboard(),
+        )
+        await message.answer(
+            "Список проектов:",
+            reply_markup=get_location_projects_keyboard(location_id),
+        )
+        return
+
     await state.set_state(UploadPhotosState.choosing_location)
     await message.answer(
         "Выберите локацию",

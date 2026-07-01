@@ -7,6 +7,13 @@
   </head>
   <body>
     <h1>Слоты</h1>
+    <form method="get" action="/admin/slots">
+      <label for="project_key">Фильтр по проекту</label>
+      <select id="project_key" name="project_key">
+        {{ projects_filter_options }}
+      </select>
+      <button type="submit">Показать</button>
+    </form>
     <p><a href="/admin/slots/add"><button type="button">Добавить</button></a></p>
     <table border="1" cellpadding="6">
       <thead>
