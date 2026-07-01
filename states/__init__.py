@@ -6,3 +6,4 @@ class UploadPhotosState(StatesGroup):
     choosing_project = State()
     choosing_slot = State()
     waiting_photos = State()
+    waiting_logo_photos = State()

@@ -20,6 +20,9 @@ def get_location_projects_keyboard(location_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=project["name"], callback_data=f"project:{project['id']}")]
         for project in get_location_projects(location_id)
     ]
+    keyboard.append(
+        [InlineKeyboardButton(text="Добавить лого без выгрузки", callback_data="logo_only")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

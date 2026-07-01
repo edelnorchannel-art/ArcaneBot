@@ -11,7 +11,7 @@ from typing import Any, TypedDict, cast
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from keyboards.inline import (
     get_location_projects_keyboard,
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 _media_groups: dict[tuple[int, int, str], MediaGroupData] = {}
 _media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
+_logo_media_groups: dict[tuple[int, int, str], list[Message]] = {}
+_logo_media_group_tasks: dict[tuple[int, int, str], asyncio.Task[None]] = {}
 _MONTH_NAMES = [
     "Январь",
     "Февраль",
@@ -247,6 +249,41 @@ async def _upload_messages(
     )
 
 
+async def _send_watermarked_photos(
+    messages: list[Message],
+    bot: Bot,
+) -> int:
+    sent_count = 0
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for index, message in enumerate(messages, start=1):
+            telegram_file, suffix = _get_message_file(message)
+            if telegram_file is None:
+                continue
+
+            downloaded_path = Path(temp_dir) / f"{index}{suffix}"
+            watermarked_path = Path(temp_dir) / f"{index}.jpg"
+
+            try:
+                await bot.download(telegram_file, destination=downloaded_path)
+            except Exception as exc:
+                raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
+
+            try:
+                await asyncio.to_thread(
+                    apply_watermark,
+                    downloaded_path,
+                    watermarked_path,
+                )
+            except WatermarkError as exc:
+                raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+
+            await message.answer_document(FSInputFile(watermarked_path))
+            sent_count += 1
+
+    return sent_count
+
+
 async def _send_upload_error(message: Message, error: UploadError) -> None:
     logger.exception("Photo upload failed")
     await message.answer(error.user_message)
@@ -315,6 +352,32 @@ async def _send_media_group_result(
             return
 
         await _finish_successful_upload(messages[-1], state, bot, result)
+
+
+async def _send_logo_media_group_result(
+    key: tuple[int, int, str],
+    bot: Bot,
+    state: FSMContext,
+) -> None:
+    await asyncio.sleep(1)
+    messages = _logo_media_groups.pop(key, [])
+    _logo_media_group_tasks.pop(key, None)
+
+    if not messages:
+        return
+
+    await messages[-1].answer("Ожидайте, фотографии обрабатываются...")
+    try:
+        await _send_watermarked_photos(messages, bot)
+    except UploadError as error:
+        await _send_upload_error(messages[-1], error)
+        return
+
+    await state.clear()
+    await messages[-1].answer(
+        "Фотографии обработаны.",
+        reply_markup=get_main_keyboard(),
+    )
 
 
 @router.message(F.text == "Загрузить фотографии")
@@ -386,6 +449,17 @@ async def choose_project(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+@router.callback_query(UploadPhotosState.choosing_project, F.data == "logo_only")
+async def choose_logo_only(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(UploadPhotosState.waiting_logo_photos)
+    if isinstance(callback.message, Message):
+        await callback.message.answer(
+            "Отправьте фотографии для добавления лого.\n"
+            "Фотографии будут отправлены обратно без сжатия."
+        )
+    await callback.answer()
+
+
 @router.callback_query(UploadPhotosState.choosing_slot, F.data.startswith("slot:"))
 async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
     time_slot = callback.data.split(":", maxsplit=1)[1]
@@ -399,6 +473,36 @@ async def choose_slot(callback: CallbackQuery, state: FSMContext) -> None:
             "Не больше 10 изображений за раз!"
         )
     await callback.answer()
+
+
+@router.message(UploadPhotosState.waiting_logo_photos, F.photo | F.document)
+async def handle_logo_photos(message: Message, state: FSMContext, bot: Bot) -> None:
+    if not _is_image(message):
+        return
+
+    if message.media_group_id and message.from_user:
+        key = (message.chat.id, message.from_user.id, message.media_group_id)
+        _logo_media_groups.setdefault(key, []).append(message)
+
+        if key not in _logo_media_group_tasks:
+            _logo_media_group_tasks[key] = asyncio.create_task(
+                _send_logo_media_group_result(key, bot, state)
+            )
+
+        return
+
+    await message.answer("Ожидайте, фотографии обрабатываются...")
+    try:
+        await _send_watermarked_photos([message], bot)
+    except UploadError as error:
+        await _send_upload_error(message, error)
+        return
+
+    await state.clear()
+    await message.answer(
+        "Фотографии обработаны.",
+        reply_markup=get_main_keyboard(),
+    )
 
 
 @router.message(UploadPhotosState.waiting_photos, F.photo | F.document)
