@@ -388,6 +388,11 @@ def _render_slot_form(
     )
 
 
+def _render_slot_add_form() -> str:
+    template = (templates_dir / "slot_add_form.html").read_text(encoding="utf-8")
+    return template.replace("{{ projects_options }}", _build_project_options())
+
+
 def _parse_project_key(project_key: str) -> tuple[str, str] | None:
     if ":" not in project_key:
         return None
@@ -397,6 +402,33 @@ def _parse_project_key(project_key: str) -> tuple[str, str] | None:
         return None
 
     return location_id, project_id
+
+
+def _parse_int(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _build_generated_slots(
+    start_hour: int,
+    start_minute: int,
+    duration_minutes: int,
+    slot_count: int,
+) -> list[str]:
+    start_hour = max(0, min(start_hour, 23))
+    start_minute = max(0, min(start_minute, 59))
+    slot_count = max(1, slot_count)
+    duration_minutes = max(1, duration_minutes)
+    day_minutes = 24 * 60
+    start_total_minutes = start_hour * 60 + start_minute
+
+    return [
+        f"{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+        for index in range(slot_count)
+        for total_minutes in [(start_total_minutes + duration_minutes * index) % day_minutes]
+    ]
 
 
 def _create_session_token() -> str:
@@ -687,10 +719,7 @@ async def admin_slots_page(project_key: str = "") -> str:
 
 @app.get("/admin/slots/add", response_class=HTMLResponse)
 async def add_slot_page() -> str:
-    return _render_slot_form(
-        title="Добавить слот",
-        action="/admin/slots/add",
-    )
+    return _render_slot_add_form()
 
 
 @app.post("/admin/slots/add")
@@ -701,6 +730,12 @@ async def add_slot(request: Request) -> RedirectResponse:
         return RedirectResponse(url="/admin/slots", status_code=303)
 
     location_id, project_id = project_key
+    generated_slots = _build_generated_slots(
+        start_hour=_parse_int(form_data.get("start_hour", ""), 0),
+        start_minute=_parse_int(form_data.get("start_minute", ""), 0),
+        duration_minutes=_parse_int(form_data.get("duration_minutes", ""), 60),
+        slot_count=_parse_int(form_data.get("slot_count", ""), 1),
+    )
     locations = _get_locations()
 
     for location in locations:
@@ -710,7 +745,7 @@ async def add_slot(request: Request) -> RedirectResponse:
         for project in _get_projects(location):
             if project.get("id") == project_id:
                 time_slots = _get_time_slots(project)
-                time_slots.append(form_data.get("time", "").strip())
+                time_slots.extend(generated_slots)
                 project["time_slots"] = time_slots
                 break
         break

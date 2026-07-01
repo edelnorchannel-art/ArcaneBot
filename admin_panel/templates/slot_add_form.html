@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Добавить слоты</title>
+  </head>
+  <body>
+    <h1>Добавить слоты</h1>
+    <form method="post" action="/admin/slots/add">
+      <p>
+        <label for="project_key">Проект</label>
+        <select id="project_key" name="project_key">
+          {{ projects_options }}
+        </select>
+      </p>
+      <p>
+        <label for="slot_count">Количество слотов</label>
+        <input id="slot_count" name="slot_count" type="number" min="1" value="1">
+      </p>
+      <fieldset>
+        <legend>Длина слота</legend>
+        <label><input type="radio" name="duration_minutes" value="60" checked> 1 час</label>
+        <label><input type="radio" name="duration_minutes" value="70"> 1 час 10 минут</label>
+        <label><input type="radio" name="duration_minutes" value="75"> 1 час 15 минут</label>
+        <label><input type="radio" name="duration_minutes" value="80"> 1 час 20 минут</label>
+        <label><input type="radio" name="duration_minutes" value="90"> 1 час 30 минут</label>
+        <label><input type="radio" name="duration_minutes" value="120"> 2 часа</label>
+      </fieldset>
+      <p>
+        <label>Время первого слота</label>
+        <input id="start_hour" name="start_hour" type="number" min="0" max="23" value="9" style="width: 4em">
+        :
+        <input id="start_minute" name="start_minute" type="number" min="0" max="59" value="0" style="width: 4em">
+      </p>
+      <button type="submit">Сохранить</button>
+    </form>
+    <h2>Предпросмотр</h2>
+    <ul id="slots_preview"></ul>
+    <p><a href="/admin/slots">Назад</a></p>
+    <script>
+      function getDuration() {
+        return Number(document.querySelector('input[name="duration_minutes"]:checked').value);
+      }
+
+      function pad(value) {
+        return String(value).padStart(2, "0");
+      }
+
+      function updatePreview() {
+        const count = Math.max(1, Number(document.getElementById("slot_count").value || 1));
+        const hour = Number(document.getElementById("start_hour").value || 0);
+        const minute = Number(document.getElementById("start_minute").value || 0);
+        const duration = getDuration();
+        const preview = document.getElementById("slots_preview");
+        preview.innerHTML = "";
+
+        for (let index = 0; index < count; index += 1) {
+          const totalMinutes = (hour * 60 + minute + duration * index) % (24 * 60);
+          const item = document.createElement("li");
+          item.textContent = `${pad(Math.floor(totalMinutes / 60))}:${pad(totalMinutes % 60)}`;
+          preview.appendChild(item);
+        }
+      }
+
+      document.querySelectorAll("input").forEach((input) => {
+        input.addEventListener("input", updatePreview);
+        input.addEventListener("change", updatePreview);
+      });
+      updatePreview();
+    </script>
+  </body>
+</html>
