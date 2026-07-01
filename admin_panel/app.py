@@ -8,7 +8,13 @@ from urllib.parse import parse_qs
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 
 from admin_panel.config_service import ConfigService
 from config import ADMIN_PASSWORD
@@ -388,7 +394,7 @@ async def login_page() -> str:
 
 
 @app.post("/login")
-async def login(request: Request) -> HTMLResponse | RedirectResponse:
+async def login(request: Request) -> Response:
     form_data = await _read_form_data(request)
     password = form_data.get("password", "")
 
@@ -429,7 +435,7 @@ async def backups_page() -> str:
 
 
 @app.get("/admin/backups/{backup_name}")
-async def download_backup(backup_name: str) -> FileResponse | RedirectResponse:
+async def download_backup(backup_name: str) -> Response:
     if Path(backup_name).name != backup_name:
         return RedirectResponse(url="/admin/backups", status_code=303)
 
@@ -474,7 +480,7 @@ async def add_location(request: Request) -> RedirectResponse:
 
 
 @app.get("/admin/locations/{location_id}/edit", response_class=HTMLResponse)
-async def edit_location_page(location_id: str) -> HTMLResponse | RedirectResponse:
+async def edit_location_page(location_id: str) -> Response:
     location = _get_location(location_id)
     if location is None:
         return RedirectResponse(url="/admin/locations", status_code=303)
@@ -556,7 +562,7 @@ async def add_project(request: Request) -> RedirectResponse:
 async def edit_project_page(
     location_id: str,
     project_id: str,
-) -> HTMLResponse | RedirectResponse:
+) -> Response:
     result = _get_project(location_id, project_id)
     if result is None:
         return RedirectResponse(url="/admin/projects", status_code=303)
@@ -677,7 +683,7 @@ async def edit_slot_page(
     location_id: str,
     project_id: str,
     slot_index: int,
-) -> HTMLResponse | RedirectResponse:
+) -> Response:
     result = _get_project(location_id, project_id)
     if result is None:
         return RedirectResponse(url="/admin/slots", status_code=303)
