@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from services.watermark_service import WatermarkError, apply_watermark
+from services.watermark_errors import WatermarkError
+from services.watermark_service import apply_watermark
 
 
 def main() -> None:

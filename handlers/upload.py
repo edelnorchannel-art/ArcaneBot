@@ -26,7 +26,7 @@ from services.image_processing_service import (
     apply_watermarks_batch_async,
     release_memory_async,
 )
-from services.watermark_service import WatermarkError
+from services.watermark_errors import WatermarkError
 from services.webdav_service import WebDAVService
 from states import UploadPhotosState
 
@@ -239,46 +239,50 @@ async def _upload_messages(
     )
     uploaded_count = 0
 
+    webdav_service = WebDAVService()
     try:
-        webdav_service = WebDAVService()
         await asyncio.to_thread(webdav_service.create_folders, remote_folder)
         used_names = await asyncio.to_thread(
             webdav_service.list_file_names,
             remote_folder,
         )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            watermark_pairs: list[tuple[Path, Path]] = []
+
+            for index, photo_item in enumerate(photo_items, start=1):
+                downloaded_path = Path(temp_dir) / f"{index}{photo_item.suffix}"
+                try:
+                    await bot.download(photo_item.telegram_file, destination=downloaded_path)
+                except Exception as exc:
+                    raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
+
+                watermarked_path = Path(temp_dir) / f"{index}.jpg"
+                watermark_pairs.append((downloaded_path, watermarked_path))
+
+            try:
+                await apply_watermarks_batch_async(watermark_pairs)
+            except WatermarkError as exc:
+                raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
+
+            for _, watermarked_path in watermark_pairs:
+                remote_filename = _allocate_unique_filename(used_names)
+                remote_path = f"{remote_folder}/{remote_filename}"
+                try:
+                    await asyncio.to_thread(
+                        webdav_service.upload_file,
+                        watermarked_path,
+                        remote_path,
+                    )
+                except Exception as exc:
+                    raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
+                uploaded_count += 1
+    except UploadError:
+        raise
     except Exception as exc:
         raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        watermark_pairs: list[tuple[Path, Path]] = []
-
-        for index, photo_item in enumerate(photo_items, start=1):
-            downloaded_path = Path(temp_dir) / f"{index}{photo_item.suffix}"
-            try:
-                await bot.download(photo_item.telegram_file, destination=downloaded_path)
-            except Exception as exc:
-                raise UploadError(DOWNLOAD_ERROR_MESSAGE) from exc
-
-            watermarked_path = Path(temp_dir) / f"{index}.jpg"
-            watermark_pairs.append((downloaded_path, watermarked_path))
-
-        try:
-            await apply_watermarks_batch_async(watermark_pairs)
-        except WatermarkError as exc:
-            raise UploadError(WATERMARK_ERROR_MESSAGE) from exc
-
-        for index, (_, watermarked_path) in enumerate(watermark_pairs, start=1):
-            remote_filename = _allocate_unique_filename(used_names)
-            remote_path = f"{remote_folder}/{remote_filename}"
-            try:
-                await asyncio.to_thread(
-                    webdav_service.upload_file,
-                    watermarked_path,
-                    remote_path,
-                )
-            except Exception as exc:
-                raise UploadError(WEBDAV_ERROR_MESSAGE) from exc
-            uploaded_count += 1
+    finally:
+        webdav_service.close()
 
     await release_memory_async()
 

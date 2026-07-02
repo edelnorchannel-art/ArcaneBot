@@ -24,6 +24,16 @@ class WebDAVService:
             timeout=60,
         )
 
+    def close(self) -> None:
+        close_client = getattr(self.client, "close", None)
+        if callable(close_client):
+            close_client()
+            return
+
+        http_client = getattr(self.client, "_http", None)
+        if http_client is not None and hasattr(http_client, "close"):
+            http_client.close()
+
     def folder_exists(self, path: str) -> bool:
         try:
             return self.client.exists(path) and self.client.isdir(path)

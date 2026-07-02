@@ -5,7 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from services.watermark_service import WatermarkError, release_memory
+from services.memory_utils import release_memory
+from services.watermark_errors import WatermarkError
 
 _processing_semaphore = asyncio.Semaphore(1)
 _WATERMARK_TIMEOUT_SECONDS = 120
