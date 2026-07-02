@@ -4,8 +4,113 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Админ-панель</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 24px;
+        max-width: 900px;
+      }
+
+      nav {
+        margin-bottom: 24px;
+      }
+
+      h1, h2 {
+        margin: 0 0 16px;
+      }
+
+      .metrics-section {
+        margin-bottom: 32px;
+        padding: 16px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background: #fafafa;
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: 70px 1fr 70px 150px;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      .metric-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .metric-label {
+        font-weight: bold;
+      }
+
+      .bar-track {
+        width: 100%;
+        height: 18px;
+        background: #e9ecef;
+        border-radius: 9px;
+        overflow: hidden;
+      }
+
+      .bar-fill {
+        height: 100%;
+        width: 0;
+        border-radius: 9px;
+        transition: width 0.4s ease, background-color 0.4s ease;
+      }
+
+      .metric-percent {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric-size {
+        font-variant-numeric: tabular-nums;
+        color: #444;
+      }
+
+      .metrics-updated {
+        margin-top: 12px;
+        font-size: 12px;
+        color: #666;
+      }
+    </style>
   </head>
   <body>
+    <h1>Админ-панель</h1>
+
+    <section class="metrics-section">
+      <h2>Состояние сервера</h2>
+
+      <div class="metric-row">
+        <div class="metric-label">CPU</div>
+        <div class="bar-track">
+          <div class="bar-fill" id="cpu-bar"></div>
+        </div>
+        <div class="metric-percent" id="cpu-percent">—</div>
+        <div class="metric-size" id="cpu-size">—</div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-label">ОЗУ</div>
+        <div class="bar-track">
+          <div class="bar-fill" id="memory-bar"></div>
+        </div>
+        <div class="metric-percent" id="memory-percent">—</div>
+        <div class="metric-size" id="memory-size">—</div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-label">Диск</div>
+        <div class="bar-track">
+          <div class="bar-fill" id="disk-bar"></div>
+        </div>
+        <div class="metric-percent" id="disk-percent">—</div>
+        <div class="metric-size" id="disk-size">—</div>
+      </div>
+
+      <div class="metrics-updated" id="metrics-updated">Обновление...</div>
+    </section>
+
     <nav>
       <a href="/admin/locations"><button type="button">Локации</button></a>
       <a href="/admin/projects"><button type="button">Проекты</button></a>
@@ -16,5 +121,57 @@
       </form>
       <a href="/logout"><button type="button">Выход</button></a>
     </nav>
+
+    <script>
+      const METRICS_REFRESH_MS = 3000;
+
+      function getBarColor(percent) {
+        if (percent >= 80) {
+          return "#d9534f";
+        }
+        if (percent >= 60) {
+          return "#f0ad4e";
+        }
+        return "#5cb85c";
+      }
+
+      function updateMetric(key, metric) {
+        const percent = Number(metric.percent) || 0;
+        const bar = document.getElementById(`${key}-bar`);
+        const percentNode = document.getElementById(`${key}-percent`);
+        const sizeNode = document.getElementById(`${key}-size`);
+
+        bar.style.width = `${Math.min(percent, 100)}%`;
+        bar.style.backgroundColor = getBarColor(percent);
+        percentNode.textContent = `${percent.toFixed(1)}%`;
+        sizeNode.textContent = `${metric.used_label} / ${metric.total_label}`;
+      }
+
+      async function refreshMetrics() {
+        try {
+          const response = await fetch("/admin/api/metrics", {
+            credentials: "same-origin",
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+          updateMetric("cpu", data.cpu);
+          updateMetric("memory", data.memory);
+          updateMetric("disk", data.disk);
+
+          const updatedAt = new Date().toLocaleTimeString("ru-RU");
+          document.getElementById("metrics-updated").textContent =
+            `Обновлено: ${updatedAt}`;
+        } catch (error) {
+          document.getElementById("metrics-updated").textContent =
+            "Не удалось получить метрики сервера";
+        }
+      }
+
+      refreshMetrics();
+      setInterval(refreshMetrics, METRICS_REFRESH_MS);
+    </script>
   </body>
 </html>

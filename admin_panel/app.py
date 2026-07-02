@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import shutil
 from datetime import datetime
@@ -11,12 +12,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
+    JSONResponse,
     PlainTextResponse,
     RedirectResponse,
     Response,
 )
 
 from admin_panel.config_service import ConfigService
+from admin_panel.system_metrics import get_system_metrics_dict
 from config import ADMIN_PASSWORD
 
 app = FastAPI(title="Photo Bot Admin Panel")
@@ -494,6 +497,12 @@ async def logout() -> RedirectResponse:
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page() -> str:
     return (templates_dir / "admin.html").read_text(encoding="utf-8")
+
+
+@app.get("/admin/api/metrics")
+async def admin_metrics_api() -> JSONResponse:
+    metrics = await asyncio.to_thread(get_system_metrics_dict)
+    return JSONResponse(metrics)
 
 
 @app.post("/admin/backup")
