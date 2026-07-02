@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import logging
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -12,9 +14,6 @@ try:
 except ImportError:
     pass
 
-from services.memory_utils import release_memory
-from services.watermark_errors import WatermarkError
-
 logger = logging.getLogger(__name__)
 
 WATERMARK_PATH = Path(__file__).resolve().parents[1] / "imgs" / "watermark.png"
@@ -22,6 +21,27 @@ WATERMARK_HEIGHT_RATIO = 1 / 8
 WATERMARK_WIDTH_RATIO_VERTICAL = 1 / 3
 WATERMARK_MARGIN = 20
 JPEG_QUALITY = 90
+
+
+class WatermarkError(Exception):
+    pass
+
+
+def release_memory() -> None:
+    _release_memory()
+
+
+def _release_memory() -> None:
+    gc.collect()
+    if sys.platform != "linux":
+        return
+
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 def _detach_image(image: Image.Image, opened_image: Image.Image) -> Image.Image:
@@ -93,4 +113,4 @@ def apply_watermark(source_path: Path, destination_path: Path) -> None:
             logo.close()
         if photo is not None:
             photo.close()
-        release_memory()
+        _release_memory()
