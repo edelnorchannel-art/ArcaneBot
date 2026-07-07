@@ -385,6 +385,7 @@ async def _send_media_group_result(
     reply_message = media_group.get("reply_message")
     upload_data = media_group.get("data")
     if photo_items and isinstance(reply_message, Message) and upload_data:
+        await state.set_state(UploadPhotosState.processing_photos)
         await reply_message.answer("Ожидайте, фотографии обрабатываются...")
         try:
             result = await _upload_messages(
@@ -413,6 +414,7 @@ async def _send_logo_media_group_result(
     if not photo_items or not isinstance(reply_message, Message):
         return
 
+    await state.set_state(UploadPhotosState.processing_photos)
     await reply_message.answer("Ожидайте, фотографии обрабатываются...")
     try:
         await _send_watermarked_photos(photo_items, bot, reply_message)
@@ -551,6 +553,7 @@ async def handle_logo_photos(message: Message, state: FSMContext, bot: Bot) -> N
     if photo_item is None:
         return
 
+    await state.set_state(UploadPhotosState.processing_photos)
     await message.answer("Ожидайте, фотографии обрабатываются...")
     try:
         await _send_watermarked_photos([photo_item], bot, message)
@@ -563,6 +566,12 @@ async def handle_logo_photos(message: Message, state: FSMContext, bot: Bot) -> N
         "Фотографии обработаны.",
         reply_markup=get_main_keyboard(),
     )
+
+
+@router.message(UploadPhotosState.processing_photos, F.photo | F.document)
+async def handle_photos_while_processing(message: Message) -> None:
+    if _is_image(message):
+        await message.answer("Фотографии уже обрабатываются. Дождитесь завершения.")
 
 
 @router.message(UploadPhotosState.waiting_photos, F.photo | F.document)
@@ -596,6 +605,7 @@ async def handle_photos(message: Message, state: FSMContext, bot: Bot) -> None:
     if photo_item is None:
         return
 
+    await state.set_state(UploadPhotosState.processing_photos)
     await message.answer("Ожидайте, фотографии обрабатываются...")
     try:
         result = await _upload_messages(
